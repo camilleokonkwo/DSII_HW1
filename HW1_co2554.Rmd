@@ -7,24 +7,66 @@ output: github_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
 ```
 
-## R Markdown
+## loading training and testing data 
+```{r}
+testing_data = read_csv("data/housing_test.csv")
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+training_data = read_csv("data/housing_training.csv")
 ```
 
-## Including Plots
+1a) Fit a lasso model on the training data. Report the selected tuning parameter and the test error. When the 1SE rule is applied, how many predictors are included in the model?
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+## loading necessary packages
+```{r}
+library(glmnet)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### specifying predictors and response variables
+```{r}
+x <- model.matrix(Sale_Price ~ ., training_data)[,-1]
+y <- as.numeric(training_data$Sale_Price)
+
+library(corrplot)
+
+corrplot(cor(x), method = "circle", type = "full")
+```
+
+### fitting lasso model on the training data
+```{r}
+set.seed(2)
+
+cv.lasso <- cv.glmnet(x, y,
+                      alpha = 1,
+                      lambda = exp(seq(6, -5, length = 100)))
+
+plot(cv.lasso)
+```
+
+### selected tuning parameter and test error
+```{r}
+# tuning parameter
+cv.lasso$lambda.min
+
+# test error
+min(cv.lasso$cvm)
+```
+
+The best tuning parameter selected for the lasso regression is an alpha = 1 and a lambda = 48.857. The test error is 534903510. 
+
+### applying 1SE
+```{r}
+# 1SE lambda
+cv.lasso$lambda.1se
+
+# extracting coefficients
+lasso.1se <- predict(cv.lasso, s = cv.lasso$lambda.1se, type = "coefficients")
+
+# counting how many predictors included in model
+num_predictors_1se <- sum(lasso.1se != 0)
+```
+
+When the 1SE rule is applied, there are 37 predictors included in the model. 
+

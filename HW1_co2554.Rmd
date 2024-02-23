@@ -10,32 +10,40 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
-## loading training and testing data 
+### loading training and testing data 
 ```{r}
 testing_data = read_csv("data/housing_test.csv")
 
 training_data = read_csv("data/housing_training.csv")
 ```
 
-1a) Fit a lasso model on the training data. Report the selected tuning parameter and the test error. When the 1SE rule is applied, how many predictors are included in the model?
-
-### loading `glmnet`
-```{r}
-library(glmnet)
-```
-
 ### specifying predictors and response variables
 ```{r}
-x <- model.matrix(Sale_Price ~ ., training_data)[,-1]
-y <- as.numeric(training_data$Sale_Price)
+# training data
+x <- model.matrix(Sale_Price ~ ., training_data)[, -1]
+y <- training_data$Sale_Price
 
+# testing data
+x2 <- model.matrix(Sale_Price ~ .,testing_data)[, -1]
+y2 <- testing_data$Sale_Price
+
+# correlation plot
 library(corrplot)
 
 corrplot(cor(x), method = "circle", type = "full")
 ```
 
-### fitting lasso model on the training data
+### setting seed
 ```{r}
+set.seed(2)
+```
+
+1a) Fit a lasso model on the training data. Report the selected tuning parameter and the test error. When the 1SE rule is applied, how many predictors are included in the model?
+
+### fitting lasso model on the training data using `glmnet`
+```{r}
+library(glmnet)
+
 set.seed(2)
 
 cv.lasso <- cv.glmnet(x, 
@@ -44,7 +52,6 @@ cv.lasso <- cv.glmnet(x,
                       lambda = exp(seq(6, -5, length = 100)))
 
 plot(cv.lasso)
-
 ```
 
 ### selected tuning parameter and test error
@@ -74,6 +81,7 @@ When the 1SE rule is applied, there are 37 predictors included in the model.
 
 
 1b) Fit an elastic net model on the training data. Report the selected tuning parameters and the test error. Is it possible to apply the 1SE rule to select the tuning parameters for elastic net? If the 1SE rule is applicable, implement it to select the tuning parameters. If not, explain why. 
+
 loading `caret`
 ```{r}
 library(caret)
@@ -81,10 +89,12 @@ library(caret)
 
 ### fitting an elastic net model on the training data
 ```{r}
-# creating a training control with a 10-fold cross-validation
-ctrl1 <- trainControl(method = "cv", number = 10)
-
 set.seed(2)
+
+# creating a training control with a 10-fold cross-validation
+ctrl1 <- trainControl(method = "cv", 
+                      number = 10, 
+                      selectionFunction = "best")
 
 # elastic net model
 enet.fit <- train(Sale_Price ~ .,
@@ -106,33 +116,154 @@ enet.pred <- predict(enet.fit, newdata = testing_data)
 # test error
 mean((enet.pred - testing_data$Sale_Price)^2)
 ```
-The best tuning parameter selected for the elastic net model is an alpha = 0.1 and a lambda = 403.4288. The test error is 439135085. 
+The best tuning parameter selected for the elastic net model is an alpha = 0.1 and a lambda = 403.4288. The test error is 440789346.
 
-The 1SE rule is not applicable in selecting the tuning parameters for elastic net. Since elastic net is a combination of lasso and ridge, it over-complicates the model. Lasso and ridge have one tuning parameter, while elastic net has two.
+### applying 1SE to elastic net model in `caret`
+```{r}
+set.seed(2)
 
+# 1SE
+ctrl2 <- trainControl(method = "cv",
+                      number = 10,
+                      selectionFunction = "oneSE")
+# elastic net model
+enet.fit.1se <- train(Sale_Price ~ .,
+                  data = training_data,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = seq(0, 1, length = 21),
+                                         lambda = exp(seq(6, 0, length = 100))),
+                  trControl = ctrl2)
 
-1c) Fit a partial least squares model on the training data and report the test error. How
-many components are included in your model?
+# tuning parameter
+enet.fit.1se$bestTune
+
+# prediction
+enet.pred.1se <- predict(enet.fit.1se, newdata = testing_data)
+
+# test error
+mean((enet.pred.1se - testing_data$Sale_Price)^2)
+```
+The best tuning parameter selected for the elastic net model using 1SE is an alpha = 0 and a lambda = 403.4288. The test error is 440789346. An alpha value of zero signifies pure ridge regression, and instead of the mix of L1 and L2 regularization we see in elastic net, it becomes only L2 and the penalty term for the L1 normalization is removed from the optimization objective. That being said, 1SE is not applicable in this case to elastic net. 
+
+1c) Fit a partial least squares model on the training data and report the test error. How many components are included in your model?
 
 ### PLS using `caret`
 ```{r}
 set.seed(2)
 
-ctrl1 <- trainControl(method = "repeatedcv",
-                      number = 10,
-                      repeats = 5,
-                      selectionFunction = "best")
+library(caret)
 
-pls.fit <- train(x, y,
+#PLS
+pls.fit <- train(x, 
+                 y,
                  method = "pls",
-                 tuneGrid = data.frame(ncomp = 1:19),
+                 tuneGrid = data.frame(ncomp = 1:39),
                  trControl = ctrl1,
                  preProcess = c("center", "scale"))
 
 
+# test error
+predy2.pls2 <- predict(pls.fit, newdata = x2)
+mean((y2 - predy2.pls2)^2)
+
+# components plot
+ggplot(pls.fit, highlight = TRUE)
+
 ```
+There are 8 components chosen for this model. The test error is 440217938. 
 
 
 1d) Choose the best model for predicting the response and explain your choice.
 
+### lasso using `caret`
+```{r}
+set.seed(2)
+
+# fitting lasso model
+lasso.fit <- train(Sale_Price ~.,
+                   data = training_data,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1,
+                                          lambda = exp(seq(6, 0, length = 100))),
+                   trControl = ctrl1
+)
+
+plot(lasso.fit, xTrans = log)
+```
+
+### comparing models
+```{r}
+set.seed(2)
+
+lm.fit <- train(Sale_Price ~ .,
+                data = training_data,
+                method = "lm",
+                trControl = ctrl1)
+
+resamp <- resamples(list(enet = enet.fit, lasso = lasso.fit, pls = pls.fit))
+
+summary(resamp)
+
+parallelplot(resamp, metric = "RMSE")
+```
+From the resampling summary, the best model is the elastic net since it has the smallest mean RMSE value of 23013.05. 
+
+
 1e) If “caret” was used for the elastic net in (b), retrain this model with “tidymodels”, and vice versa. Compare the selected tuning parameters between the two software approaches. Should there be discrepancies in the chosen parameters, discuss potential reasons for these differences.
+
+### retraining elastic net with `tidymodels`
+```{r}
+library(tidymodels)
+
+set.seed(2)
+
+cv_folds <- vfold_cv(training_data, v = 10)
+
+# model specification for elastic net
+enet_spec <- linear_reg(penalty = tune(), mixture = tune()) |>
+  set_engine("glmnet") |>
+  set_mode("regression")
+
+# grid of tuning parameters (change penalty range?)
+enet_grid_set <- parameters(penalty(range = c(-3, 5),
+                                    trans = log_trans()),
+                            mixture(range = c(0, 1)))
+
+enet_grid <- grid_regular(enet_grid_set, levels = c(100, 21))
+
+# set up workflow
+enet_workflow <- workflow() |>
+  add_model(enet_spec) |>
+  add_formula(Sale_Price ~ .)
+
+# tune model
+enet_tune <- tune_grid(
+  enet_workflow,
+  resamples = cv_folds,
+  grid = enet_grid
+)
+
+# CV plot
+autoplot(enet_tune, metric = "rmse") + 
+  theme(legend.position = "top") +
+  labs(color = "Mixing Percentage\n(Alpha Values)") 
+
+# selecting best tuning parameters
+enet_best <- select_best(enet_tune, metric = "rmse")
+
+# update model with the best lambda
+final_enet_spec <- enet_spec |> 
+  update(penalty = enet_best$penalty,
+         mixture = enet_best$mixture)
+
+# fit model to the train data
+enet_fit <- fit(final_enet_spec,
+                formula = Sale_Price ~ .,
+                data = training_data)
+
+# Get coefficients
+enet_model <- extract_fit_engine(enet_fit)
+
+coef(enet_model, s = enet_best$penalty)
+```
+
